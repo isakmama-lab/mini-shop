@@ -2,6 +2,8 @@
 import { useEffect, useState } from "react";
 import "./App.css";
 import ProductCard from "./components/ProductCard";
+import { Routes, Route, Link, useNavigate } from "react-router";
+import ShopNav from "./components/ShopNav";
 
 // const products = [
 //   { id: 1, name: "캔버스 토트백", category: "가방", price: 18000, emoji: "👜" },
@@ -15,6 +17,7 @@ function App() {
   const shopName = "오늘의 상점";
   // const productName = "캔버스 토트백";
   // const price = 18000;
+  const navigate = useNavigate();
 
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("전체");
@@ -23,12 +26,18 @@ function App() {
     name: "",
     email: "",
   });
+  const [useMemberInfo, setUseMemberInfo] = useState(false);
 
   const [products, setProducts] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [productError, setProductError] = useState("");
 
   const [wasSubmitted, setWasSubmitted] = useState(false);
+
+  // React 주문 폼의 상태
+  const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
+  const [orderError, setOrderError] = useState("");
+  const [orderResult, setOrderResult] = useState(null);
 
   const featuredProduct = products[0];
   const categories = [
@@ -133,9 +142,66 @@ function App() {
     setOrderForm((currentForm) => ({ ...currentForm, [name]: value }));
   }
 
-  function handleOrderSubmit(event) {
+  // function handleOrderSubmit(event) {
+  //   event.preventDefault();
+  //   setWasSubmitted(true);
+  // }
+
+  async function handleOrderSubmit(event) {
     event.preventDefault();
     setWasSubmitted(true);
+    setOrderError("");
+    setOrderResult(null);
+    
+
+    if (!isOrderValid) return;
+    if (!accessToken) {
+      setOrderError("주문하려면 먼저 로그인해 주세요.");
+      return;
+    }
+
+    setIsSubmittingOrder(true);
+    try {
+      const response = await fetch("http://127.0.0.1:8000/orders", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          name: orderName.trim(),
+          email: orderEmail.trim(),
+          items: cartItems.map((item) => ({
+            product_id: item.productId,
+            quantity: item.quantity,
+          })),
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (response.status === 401) {
+        setAccessToken(null);
+        setCurrentUser(null);
+        setUseMemberInfo(false);
+        setOrderForm({ name: "", email: "" });
+        throw new Error("로그인이 만료되었습니다. 다시 로그인해 주세요.");
+      }
+      if (!response.ok) {
+        throw new Error(
+          typeof data.detail === "string"
+            ? data.detail
+            : `주문을 저장하지 못했습니다 (${response.status}).`,
+        );
+      }
+
+      setOrderResult(data);
+      setCartItems([]);
+      setWasSubmitted(false);
+    } catch (error) {
+      setOrderError(error.message || "서버 연결을 확인해 주세요.");
+    } finally {
+      setIsSubmittingOrder(false);
+    }
   }
 
   function handleLoginChange(event) {
@@ -180,6 +246,8 @@ function App() {
       const user = await meResponse.json();
       setAccessToken(token);
       setCurrentUser(user);
+      navigate("/cart");
+
       setLoginForm((current) => ({ ...current, password: "" }));
     } catch (error) {
       setAccessToken(null);
@@ -194,7 +262,10 @@ function App() {
   function handleLogout() {
     setAccessToken(null);
     setCurrentUser(null);
+    setUseMemberInfo(false);
+    setOrderForm({ name: "", email: "" });
     setLoginError("");
+    navigate("/login");
   }
 
   const cartCount = cartItems.reduce(
@@ -207,9 +278,12 @@ function App() {
     return total + (product?.price ?? 0) * item.quantity;
   }, 0);
 
+  const orderName = useMemberInfo && currentUser ? currentUser.name : orderForm.name;
+  const orderEmail = useMemberInfo && currentUser ? currentUser.email : orderForm.email;
+
   const orderErrors = {
-    name: orderForm.name.trim() ? "" : "이름을 입력해 주세요.",
-    email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(orderForm.email.trim())
+    name: orderName.trim() ? "" : "이름을 입력해 주세요.",
+    email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(orderEmail.trim())
       ? ""
       : "올바른 이메일을 입력해 주세요.",
     cart: cartCount > 0 ? "" : "장바구니에 상품을 담아 주세요.",
@@ -223,6 +297,10 @@ function App() {
         <h1>{shopName}</h1>
         <span>취향에 맞는 물건을 찾아보세요.</span>
       </header>
+      <ShopNav cartCount={cartCount} currentUser={currentUser} />
+
+      <Routes>
+        <Route path="/login" element={
 
       <section className="auth-section" aria-labelledby="auth-title">
         <h2 id="auth-title">고객 로그인</h2>
@@ -261,7 +339,9 @@ function App() {
           </form>
         )}
       </section>
-
+          } />
+        <Route path="/" element={
+          <>
       <section className="featured-section">
         <h2>오늘의 추천 상품</h2>
         {/* <article className="featured-product"> */}
@@ -330,7 +410,13 @@ function App() {
         ) : (
           <p className="empty-state">조건에 맞는 상품이 없습니다.</p>
         )}
-      </section>
+            </section>
+            
+          </>
+        } />
+        <Route path="/cart" element={
+          <>
+
       <section className="cart-section" aria-labelledby="cart-title">
         <h2 id="cart-title">장바구니 ({cartCount}개)</h2>
         {cartItems.length === 0 ? (
@@ -373,18 +459,32 @@ function App() {
             <p className="cart-total">합계: {cartTotal.toLocaleString()}원</p>
           </>
         )}
-      </section>
+            </section>
+            {accessToken && currentUser ? (
       <section className="order-section" aria-labelledby="order-title">
         <h2 id="order-title">주문서 미리 보기</h2>
         <div className="order-layout">
           <form className="order-form" noValidate onSubmit={handleOrderSubmit}>
             <h3>주문자 정보</h3>
+            <label className="member-info-option" htmlFor="use-member-info">
+              <input
+                id="use-member-info"
+                type="checkbox"
+                checked={useMemberInfo}
+                onChange={(event) => setUseMemberInfo(event.target.checked)}
+              />
+              회원 정보 불러오기
+            </label>
+            <p className="member-info-help">
+              체크하면 회원 이름과 이메일을 사용합니다. 해제하면 직접 입력하던 값으로 돌아갑니다.
+            </p>
             <label htmlFor="order-name">이름</label>
             <input
               id="order-name"
               name="name"
-              value={orderForm.name}
+              value={orderName}
               onChange={handleOrderChange}
+              readOnly={useMemberInfo}
               aria-invalid={wasSubmitted && Boolean(orderErrors.name)}
             />
             {wasSubmitted && orderErrors.name && (
@@ -396,8 +496,9 @@ function App() {
               id="order-email"
               name="email"
               type="email"
-              value={orderForm.email}
+              value={orderEmail}
               onChange={handleOrderChange}
+              readOnly={useMemberInfo}
               aria-invalid={wasSubmitted && Boolean(orderErrors.email)}
             />
             {wasSubmitted && orderErrors.email && (
@@ -407,10 +508,21 @@ function App() {
             {wasSubmitted && orderErrors.cart && (
               <p className="form-error" role="alert">{orderErrors.cart}</p>
             )}
-            <button type="submit">입력 확인</button>
-            {wasSubmitted && isOrderValid && (
+            {/* <button type="submit">입력 확인</button> */}
+            {/* 기존 주문서에 결과 표시 */}
+            <button type="submit" disabled={isSubmittingOrder}>
+              {isSubmittingOrder ? "주문 저장 중..." : "주문하기"}
+            </button>
+            {/* {wasSubmitted && isOrderValid && (
               <p className="form-success" role="status">
                 입력 확인 완료! 실제 주문 저장은 9차시에 연결합니다.
+              </p>
+            )} */}
+            {/* 오류·저장 결과를 표시 */}
+            {orderError && <p className="form-error" role="alert">{orderError}</p>}
+            {orderResult && (
+              <p className="form-success" role="status">
+                주문 #{orderResult.order_id} 저장 완료 · 총액 {orderResult.total_price.toLocaleString()}원
               </p>
             )}
           </form>
@@ -442,7 +554,19 @@ function App() {
             </p>
           </div>
         </div>
-      </section>
+              </section>
+            ) : (
+              <p className="empty-state">
+                주문하려면 <Link to="/login">로그인</Link>해 주세요.
+              </p>
+            )}
+          </>
+        } />
+        <Route
+          path="*"
+          element={<p className="empty-state">없는 화면입니다. <Link to="/">상품 보기</Link></p>}
+        />
+      </Routes>
     </main>
   );
 }
